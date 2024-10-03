@@ -67,6 +67,11 @@ public struct ABIDecoder {
         // See https://docs.soliditylang.org/en/develop/abi-spec.html#formal-specification-of-the-encoding
 
         let hexString = hexString.replacingOccurrences(of: "0x", with: "")
+        
+        if hexString.isEmpty {
+            // Return an empty dictionary or handle accordingly
+            return [:]
+        }
 
         var returnDictionary: [String: Any] = [:]
 
