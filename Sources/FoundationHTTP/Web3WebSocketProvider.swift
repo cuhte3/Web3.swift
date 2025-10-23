@@ -130,7 +130,7 @@ public class Web3WebSocketProvider: Web3Provider, Web3BidirectionalProvider {
             // Respond to user
             failure(Error.timeoutError)
         }
-        self.receiveQueue.asyncAfter(deadline: DispatchTime(uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + self.timeoutNanoSeconds), execute: timeoutItem)
+//        self.receiveQueue.asyncAfter(deadline: DispatchTime(uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + self.timeoutNanoSeconds), execute: timeoutItem)
 
         // The response
         let responseCompletion: (_ response: String?) -> Void = { responseString in

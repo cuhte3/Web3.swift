@@ -8,7 +8,7 @@
 import Foundation
 import BigInt
 #if !Web3CocoaPods
-    import Web3
+import Web3
 #endif
 
 public struct ABIDecoder {
@@ -20,7 +20,7 @@ public struct ABIDecoder {
         case associatedTypeNotFound(type: SolidityType)
         case couldNotDecodeType(type: SolidityType, string: String)
         case unknownError
-
+        
         case realisticIndexOutOfBounds
     }
     
@@ -36,45 +36,45 @@ public struct ABIDecoder {
     public static func decodeTuple(_ types: SolidityType..., from hexString: String, repeatingComponents: [SolidityParameter]? = nil) throws -> [Any] {
         return try decodeTuple(types, from: hexString, repeatingComponents: repeatingComponents)
     }
-
+    
     public static func decodeTuple(_ types: [SolidityType], from hexString: String, repeatingComponents: [SolidityParameter]? = nil) throws -> [Any] {
         struct BasicSolParam: SolidityParameter {
             let name: String
             let type: SolidityType
             let components: [SolidityParameter]?
         }
-
+        
         var outputs = [SolidityParameter]()
         for i in 0..<types.count {
             outputs.append(BasicSolParam(name: "\(i)", type: types[i], components: repeatingComponents))
         }
-
+        
         let decodedDictionary = try decodeTuple(outputs: outputs, from: hexString)
-
+        
         var outputArray = [Any]()
-
+        
         for i in 0..<types.count {
             guard let el = decodedDictionary["\(i)"] else {
                 throw Error.couldNotDecodeType(type: types[i], string: "decode unexpectedly returned nil")
             }
             outputArray.append(el)
         }
-
+        
         return outputArray
     }
     
     public static func decodeTuple(outputs: [SolidityParameter], from hexString: String) throws -> [String: Any] {
         // See https://docs.soliditylang.org/en/develop/abi-spec.html#formal-specification-of-the-encoding
-
+        
         let hexString = hexString.replacingOccurrences(of: "0x", with: "")
         
         if hexString.isEmpty {
             // Return an empty dictionary or handle accordingly
             return [:]
         }
-
+        
         var returnDictionary: [String: Any] = [:]
-
+        
         if outputs.count == 1 {
             switch outputs[0].type {
             case .array(let type, let length):
@@ -82,76 +82,91 @@ public struct ABIDecoder {
                 if let _ = length, !type.isDynamic {
                     let decodedArray = try decodeType(type: outputs[0].type, hexString: hexString, components: outputs[0].components)
                     returnDictionary[outputs[0].name] = decodedArray
-
+                    
                     return returnDictionary
                 }
             default:
                 break
             }
         }
-
+        
         var currentIndex = hexString.startIndex
         var tailsToBeParsed: [(dataLocation: Int, param: SolidityParameter)] = []
         for i in 0..<outputs.count {
             let output = outputs[i]
-
+            
             if output.type.isDynamic {
                 // Head
                 let headStartIndex = currentIndex
                 let headEndIndex = hexString.index(headStartIndex, offsetBy: 64)
                 let subHex = String(hexString[headStartIndex..<headEndIndex])
-
+                
                 // More than Int.max doesn't make sense in any world. That's 2^63 - 1 bytes to read.
                 guard let indexBigUInt = (try decodeType(type: .uint256, hexString: subHex)) as? BigUInt, indexBigUInt <= Int.max else {
                     throw Error.realisticIndexOutOfBounds
                 }
                 let dataLocation = Int(UInt(indexBigUInt))
-
+                
                 // Bump index (faster than removing)
                 currentIndex = headEndIndex
-
+                
                 // Tails need to be parsed once we are done with the static parts (current block)
                 tailsToBeParsed.append((dataLocation: dataLocation, param: output))
             } else {
                 // Length as hex
                 let length = Int(output.type.staticPartLength) * 2
-
+                
                 let startIndex = currentIndex
                 let endIndex = hexString.index(startIndex, offsetBy: length)
                 let subHex = String(hexString[startIndex..<endIndex])
-
+                
                 returnDictionary[output.name] = try decodeType(type: output.type, hexString: subHex, components: output.components)
-
+                
                 // Bump index (faster than removing)
                 currentIndex = endIndex
             }
         }
-
+        
         // Tails
-
+        
         let startIndexes = tailsToBeParsed.map({ $0.dataLocation })
         let endIndexes = Array(startIndexes.dropFirst() + [hexString.count / 2])
         let missingTails = tailsToBeParsed.map({ $0.param })
-
+        
         for i in 0..<missingTails.count {
             if endIndexes[i] < startIndexes[i] {
                 throw Error.couldNotDecodeType(type: missingTails[i].type, string: "unexpected format of abi encoding")
             }
-
+            
             let output = missingTails[i]
-
+            
+            // Add this special case handling for empty or nearly empty dynamic types
+            if startIndexes[i] == endIndexes[i] ||
+                (endIndexes[i] - startIndexes[i] <= 1 && output.type.isDynamic) {
+                // For strings, return empty string
+                if case .type(let valueType) = output.type, valueType == .string {
+                    returnDictionary[output.name] = ""
+                    continue
+                }
+                // For bytes, return empty Data
+                else if case .type(let valueType) = output.type, case .bytes = valueType {
+                    returnDictionary[output.name] = Data()
+                    continue
+                }
+            }
+            
             // Index to start from in hex
             let tailStartIndex = hexString.index(hexString.startIndex, offsetBy: startIndexes[i] * 2)
             let tailEndIndex = hexString.index(hexString.startIndex, offsetBy: endIndexes[i] * 2)
-
+            
             let subHex = String(hexString[tailStartIndex..<tailEndIndex])
-
+            
             returnDictionary[output.name] = try decodeType(type: output.type, hexString: subHex, components: output.components)
         }
-
+        
         return returnDictionary
     }
-
+    
     private static func decodeType(type: SolidityType, hexString: String, components: [SolidityParameter]? = nil) throws -> Any {
         switch type {
         case .type(let valueType):
@@ -173,6 +188,71 @@ public struct ABIDecoder {
             case .ufixed:
                 // Decimal doesn't support numbers large enough
                 throw Error.typeNotSupported(type: type)
+            case .string:
+                // Special case handling for known empty string patterns
+                if hexString.isEmpty || hexString == "0x" || hexString == "00" ||
+                    hexString == "0000000000000000000000000000000000000000000000000000000000000000" {
+                    return ""
+                }
+                
+                // Make sure we have at least 64 characters for the length part
+                guard hexString.count >= 64 else {
+                    throw Error.couldNotDecodeType(type: .type(.string), string: hexString)
+                }
+                
+                // Get the length prefix (first 32 bytes / 64 hex chars)
+                let startIndex = hexString.startIndex
+                let lengthEndIndex = hexString.index(startIndex, offsetBy: 64)
+                let lengthHex = String(hexString[startIndex..<lengthEndIndex])
+                
+                // Parse the length
+                guard let lengthBigUInt = BigUInt(hexString: lengthHex), lengthBigUInt <= Int.max else {
+                    throw Error.couldNotDecodeType(type: .type(.string), string: hexString)
+                }
+                
+                let length = Int(lengthBigUInt)
+                
+                // If length is 0, return empty string
+                if length == 0 {
+                    return ""
+                }
+                
+                // Make sure there's enough data for the content
+                guard hexString.count >= 64 + (length * 2) else {
+                    throw Error.couldNotDecodeType(type: .type(.string), string: "String content length mismatch")
+                }
+                
+                // Extract just the actual string content after the length
+                let contentStartIndex = hexString.index(startIndex, offsetBy: 64)
+                let contentEndIndex = hexString.index(contentStartIndex, offsetBy: length * 2)
+                let contentHex = String(hexString[contentStartIndex..<contentEndIndex])
+                
+                // Convert hex to bytes using a more reliable method
+                var bytes = [UInt8]()
+                bytes.reserveCapacity(length)
+                
+                // Manual byte-by-byte hex conversion
+                var i = contentHex.startIndex
+                while i < contentHex.endIndex {
+                    let nextIndex = contentHex.index(i, offsetBy: 2, limitedBy: contentHex.endIndex) ?? contentHex.endIndex
+                    let byteHex = String(contentHex[i..<nextIndex])
+                    
+                    if byteHex.count == 2, let byte = UInt8(byteHex, radix: 16) {
+                        bytes.append(byte)
+                    }
+                    
+                    i = nextIndex
+                }
+                
+                // Create data from our manually parsed bytes
+                let data = Data(bytes)
+                
+                // Convert to string
+                if let string = String(data: data, encoding: .utf8) {
+                    return string
+                } else {
+                    throw Error.couldNotDecodeType(type: .type(.string), string: "Invalid UTF-8 string data")
+                }
             default:
                 if let nativeType = valueType.nativeType {
                     if let decodedValue = nativeType.init(hexString: hexString) {
@@ -218,7 +298,7 @@ public struct ABIDecoder {
     
     private static func decodeFixedLengthArray(elementType: SolidityType, length: Int, from hexString: String, components: [SolidityParameter]?) throws -> [Any] {
         guard length > 0 else { return [] }
-
+        
         return try decodeTuple([SolidityType](repeating: elementType, count: length), from: hexString, repeatingComponents: components)
     }
     
