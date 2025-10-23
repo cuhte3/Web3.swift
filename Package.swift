@@ -29,7 +29,7 @@ let package = Package(
         .package(url: "https://github.com/krzyzanowskim/CryptoSwift.git", from: "1.6.0"),
         .package(name: "secp256k1", url: "https://github.com/GigaBitcoin/secp256k1.swift.git", .exact("0.10.0")),
         .package(url: "https://github.com/apple/swift-collections.git", .upToNextMajor(from: "1.0.3")),
-        .package(url: "https://github.com/vapor/websocket-kit", .upToNextMajor(from: "2.6.1")),
+        .package(url: "https://github.com/vapor/websocket-kit", .exact("2.15.0")),
 
         // PromiseKit dependency
         .package(url: "https://github.com/mxcl/PromiseKit.git", from: "6.18.1"),
